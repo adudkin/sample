@@ -7,10 +7,24 @@ HTML-страницы, поэтому всего два контейнера: `w
 
 ## Запуск
 
-Нужны Docker и Docker Compose v2:
+Нужны Git, запущенный Docker и Docker Compose v2. Порт 8080 должен быть свободен.
+
+Клонируйте репозиторий и перейдите в каталог проекта:
+
+```sh
+git clone --branch work https://github.com/adudkin/sample.git
+cd sample
+```
+
+Соберите и запустите оба контейнера:
 
 ```sh
 docker compose up --build -d
+```
+
+Дождитесь запуска приложения и проверьте его готовность:
+
+```sh
 curl --fail http://localhost:8080/healthz
 ```
 
@@ -33,6 +47,17 @@ PostgreSQL не публикует порт на хост. Для локальн
 Данные сохраняются в томе `sample-data` при перезапусках и `docker compose down`.
 `docker compose down -v` удаляет данные. Изменение пароля в окружении не меняет
 пароль в уже созданной базе.
+
+## Диагностика
+
+Если приложение ещё не отвечает, проверьте состояние контейнеров и журналы:
+
+```sh
+docker compose ps
+docker compose logs --tail=100 web db
+```
+
+После готовности базы повторите запрос `/healthz`.
 
 ## Проверка
 

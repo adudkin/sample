@@ -1,0 +1,7 @@
+# Optional local HTTP entry point. Do not include this file on a public VDS.
+services:
+  frontend:
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./frontend/nginx/debug.conf:/etc/nginx/conf.d/debug.conf:ro

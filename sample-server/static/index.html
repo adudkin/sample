@@ -1,8 +1,0 @@
-<!doctype html>
-<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Сохранить текст</title>
-<style>body{font:18px system-ui;max-width:720px;margin:60px auto;padding:0 24px;background:#f6f7fb;color:#202538}textarea{display:block;box-sizing:border-box;width:100%;min-height:200px;margin:16px 0;padding:16px;font:inherit;border:1px solid #abb2c4;border-radius:8px}button{font:inherit;padding:12px 24px;border:0;border-radius:8px;background:#3555db;color:white;cursor:pointer}a{color:#3555db}#status{min-height:28px}</style>
-<h1>Сохранить текст</h1><form id="form"><label for="text">Ваш текст</label><textarea id="text" required></textarea><button id="save">Сохранить</button></form><p id="status" role="status"></p><a href="/admin">Все записи</a>
-<script>
-const form=document.querySelector('#form'),text=document.querySelector('#text'),button=document.querySelector('#save'),status=document.querySelector('#status');
-form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;status.textContent='Сохранение…';try{const response=await fetch('/api/texts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text.value})});if(!response.ok)throw new Error(await response.text());text.value='';status.textContent='Текст сохранён.';}catch(error){status.textContent='Ошибка: '+error.message;}finally{button.disabled=false;}});
-</script></html>

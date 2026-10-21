@@ -1,7 +1,0 @@
-<!doctype html>
-<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Все записи</title>
-<style>body{font:18px system-ui;max-width:720px;margin:60px auto;padding:0 24px;background:#f6f7fb;color:#202538}article{background:white;padding:20px;margin:16px 0;border:1px solid #dce0ec;border-radius:8px}article p{white-space:pre-wrap;overflow-wrap:anywhere}time{font-size:14px;color:#667085}a{color:#3555db}</style>
-<a href="/">Новая запись</a><h1>Все записи</h1><p id="status" role="status">Загрузка…</p><section id="entries"></section>
-<script>
-(async()=>{const status=document.querySelector('#status');try{const response=await fetch('/api/texts');if(!response.ok)throw new Error('Не удалось загрузить записи');const entries=await response.json();status.textContent=entries.length?'Всего записей: '+entries.length:'Записей пока нет.';for(const entry of entries){const article=document.createElement('article'),text=document.createElement('p'),date=document.createElement('time');text.textContent=entry.text;date.dateTime=entry.created_at;date.textContent=new Date(entry.created_at).toLocaleString('ru-RU');article.append(date,text);document.querySelector('#entries').append(article);}}catch(error){status.textContent=error.message;}})();
-</script></html>

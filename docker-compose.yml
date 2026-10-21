@@ -1,20 +1,42 @@
 services:
-  web:
-    build: ./sample-server
+  frontend:
+    build: ./frontend
     ports:
-      - "8080:8080"
+      - "443:443"
     environment:
-      DATABASE_URL: postgres://sample:${POSTGRES_PASSWORD:-sample_local_dev}@db:5432/sample?sslmode=disable
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      NGINX_ENVSUBST_FILTER: DOMAIN
+    volumes:
+      - type: bind
+        source: ${TLS_DIRECTORY:-/etc/letsencrypt}
+        target: /etc/letsencrypt
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build: ./sample-server
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: sample
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      PGDATABASE: sample
+      PGSSLMODE: disable
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
+
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: sample
       POSTGRES_USER: sample
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sample_local_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - sample-data:/var/lib/postgresql/data
     healthcheck:
@@ -23,5 +45,6 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+
 volumes:
   sample-data:

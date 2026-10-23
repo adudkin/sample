@@ -8,7 +8,8 @@
 В Docker Compose запускаются **три контейнера**:
 
 - `frontend` — Vue 3, собранный Vite, и nginx. Принимает HTTPS на порту **443**,
-  отдаёт страницы и передаёт `/api/` в Go API.
+  отдаёт страницы и передаёт `/api/` в Go API. На **80** обслуживает только
+  HTTP-01 проверки Let's Encrypt, остальные запросы перенаправляет на HTTPS (308).
 - `api` — Go API на внутреннем порту 8080. Порт не публикуется на хост.
 - `db` — PostgreSQL 17. Порт не публикуется на хост; данные хранятся в томе
   `sample-data`.
@@ -49,24 +50,21 @@ API использует JSON: `POST /api/cards`, `GET /api/cards`,
 ## Развёртывание на VDS с HTTPS
 
 Нужны Git, запущенный Docker Engine с Docker Compose v2, домен и доступ к DNS.
-Команды ниже рассчитаны на Ubuntu/Debian; замените `example.org` своим доменом,
-а `you@example.org` — своей почтой.
+Инструкции рассчитаны на Ubuntu/Debian и домен `vsevmeste.tech`.
 
-1. Создайте DNS-запись **A** домена с публичным IPv4 VDS. Если используете AAAA,
-   она должна указывать на работающий IPv6 этого же сервера. Откройте входящие
-   TCP-порты **443** и **80** в firewall VDS и в панели провайдера. Порт 80
-   нужен для проверки Let's Encrypt, приложение слушает только 443.
-2. Получите сертификат. Убедитесь, что порт 80 свободен: режим `standalone`
-   временно запускает на нём сервер проверки.
+### Если сертификат уже выпущен
 
-   ```sh
-   sudo apt-get update
-   sudo apt-get install -y certbot
-   sudo certbot certonly --standalone --preferred-challenges http \
-     -d example.org --email you@example.org --agree-tos
-   ```
+Для подключения существующих файлов
+`/etc/letsencrypt/live/vsevmeste.tech/fullchain.pem` и
+`/etc/letsencrypt/live/vsevmeste.tech/privkey.pem` повторно выпускать сертификат
+не нужно.
 
-3. Клонируйте проект и создайте локальный файл настроек:
+1. Проверьте DNS: запись **A** должна указывать на публичный IPv4 VDS. Если
+   используется AAAA, она должна указывать на работающий IPv6 этого же сервера.
+   Откройте входящие TCP-порты **80** и **443** в firewall VDS и панели провайдера.
+   Оба порта должны быть свободны от других HTTP-серверов перед запуском Compose.
+2. Клонируйте проект (либо обновите существующий клон) и создайте настройки,
+   если `.env` ещё нет:
 
    ```sh
    git clone --branch work https://github.com/adudkin/sample.git
@@ -74,76 +72,162 @@ API использует JSON: `POST /api/cards`, `GET /api/cards`,
    cp .env.example .env
    ```
 
-   Отредактируйте `.env` до первого запуска:
+   У существующей установки отредактируйте текущий `.env`, не заменяя пароль БД:
 
    ```dotenv
-   DOMAIN=example.org
+   DOMAIN=vsevmeste.tech
    POSTGRES_PASSWORD=replace_with_a_unique_password
    TLS_DIRECTORY=/etc/letsencrypt
+   ACME_WEBROOT=./certbot-www
    ```
 
    Не добавляйте `.env` и приватные ключи в Git. Пароль передаётся Go и
    PostgreSQL отдельной переменной, поэтому URL-кодирование не требуется.
    Смена переменной после инициализации тома сама по себе не меняет пароль БД.
+3. Создайте каталог для HTTP-проверок. Его содержимое публично доступно только
+   по пути `/.well-known/acme-challenge/`; приватные ключи туда не помещают:
 
-4. Запустите контейнеры:
+   ```sh
+   mkdir -p certbot-www/.well-known/acme-challenge
+   chmod 755 certbot-www certbot-www/.well-known certbot-www/.well-known/acme-challenge
+   ```
+
+   Если в `.env` задан другой `ACME_WEBROOT`, создайте каталог по этому пути.
+4. Запустите контейнеры и проверьте конфигурацию и готовность:
 
    ```sh
    docker compose up --build -d --remove-orphans
    docker compose ps
-   curl --fail https://example.org/healthz
+   docker compose exec -T frontend nginx -t
+   curl --fail https://vsevmeste.tech/healthz
+   curl -I 'http://vsevmeste.tech/form?source=check'
    ```
 
-   Откройте `https://example.org/`. Если API ещё запускается, повторите запрос
-   готовности. При ошибке проверьте `docker compose logs --tail=100 frontend api db`.
+   Последняя команда должна показать `308` и
+   `Location: https://vsevmeste.tech/form?source=check`.
+   Откройте `https://vsevmeste.tech/`. Если API ещё запускается, повторите запрос
+   готовности. При ошибке смотрите `docker compose logs --tail=100 frontend api db`.
 
 В nginx подключаются `live/DOMAIN/fullchain.pem` и `live/DOMAIN/privkey.pem`.
 В контейнер монтируется **весь** каталог `/etc/letsencrypt` только для чтения:
 файлы в `live/` ссылаются на `archive/`. Сертификат не встраивается в образ.
-Без сертификата фронтенд не запустится; небезопасный HTTP автоматически не
-включается. На VDS порты 8080 и 5432 открывать не нужно.
+Certbot работает на VDS и пишет файлы проверки в `ACME_WEBROOT`; nginx читает
+этот каталог через отдельный read-only bind mount.
 
-### Автоматическое продление сертификата
+**Порт 80 не нужен для чтения уже выпущенного сертификата или самого TLS.**
+Он используется для перенаправления на HTTPS и доступности HTTP-01 проверок
+при продлении. Без действительных сертификата и ключа nginx не запустится;
+порт 80 не включает приложение без HTTPS. Порты 8080 и 5432 на VDS открывать
+не нужно.
 
-Проверьте таймер certbot и тестовое продление:
+### Если сертификата ещё нет
+
+Сначала выпустите его через временный сервер Certbot, пока Compose ещё
+**не запущен** и порт 80 свободен:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y certbot
+sudo certbot certonly --standalone --preferred-challenges http \
+  --cert-name vsevmeste.tech -d vsevmeste.tech \
+  --email you@example.org --agree-tos
+```
+
+Укажите свою почту. Затем выполните шаги запуска выше и настройте продление
+через webroot, как описано далее. Без сертификата TLS-сервер не стартует,
+поэтому первая выдача и последующие продления имеют разный способ проверки.
+
+### Продление без конфликта с портом 80
+
+После запуска nginx порт 80 занят им, поэтому прежний метод Certbot
+`standalone` нужно заменить на `webroot`. Останавливать сайт для продления
+не потребуется.
+
+Проверьте доступность каталога снаружи (из корня проекта):
+
+```sh
+printf 'acme-check\n' > certbot-www/.well-known/acme-challenge/check
+chmod 644 certbot-www/.well-known/acme-challenge/check
+curl --fail http://vsevmeste.tech/.well-known/acme-challenge/check
+rm certbot-www/.well-known/acme-challenge/check
+```
+
+Ответ должен содержать `acme-check`, без перенаправления. Проверка отсутствующего
+файла по этому пути возвращает 404. Остальные HTTP-адреса перенаправляются на
+фиксированный домен из `DOMAIN`, с сохранением пути и query string.
+
+Проверьте установленную версию Certbot и имя сертификата:
+
+```sh
+certbot --version
+sudo certbot certificates
+certbot help reconfigure
+```
+
+В **Certbot 2.3.0 и новее** смените метод проверки поддерживаемой командой:
+
+```sh
+sudo certbot reconfigure --cert-name vsevmeste.tech \
+  --authenticator webroot --webroot-path /opt/sample/certbot-www
+sudo certbot renew --cert-name vsevmeste.tech --dry-run
+```
+
+Замените `/opt/sample/certbot-www` абсолютным путём к каталогу из `ACME_WEBROOT`.
+Если `certbot certificates` показывает другое имя сертификата, укажите его в
+`--cert-name`. `reconfigure` сначала выполняет тестовое продление через staging
+Let's Encrypt и при успехе сохраняет новые параметры для будущих продлений.
+Один `renew --dry-run` проверяет параметры, но сам по себе их не сохраняет.
+Если `reconfigure` недоступен, обновите Certbot поддерживаемым способом для своей
+ОС; вручную редактировать файлы `/etc/letsencrypt/renewal/` не требуется.
+См. [официальную документацию Certbot](https://eff-certbot.readthedocs.io/en/stable/using.html#modifying-the-renewal-configuration).
+
+Проверьте автоматический запуск (для установки из Debian/Ubuntu-пакета):
 
 ```sh
 sudo systemctl enable --now certbot.timer
-sudo certbot renew --dry-run
+systemctl list-timers certbot.timer
 ```
 
-Порт 80 должен оставаться доступен для будущих HTTP-проверок. После успешного
-продления nginx должен перечитать сертификат. Создайте deploy-hook
+Для другой установки Certbot используйте её штатный таймер. Порт 80 должен
+оставаться доступен из Интернета для будущих HTTP-01 проверок.
+
+После успешного продления nginx должен перечитать сертификат. Создайте deploy-hook
 `/etc/letsencrypt/renewal-hooks/deploy/reload-sample.sh` с содержимым:
 
 ```sh
 #!/bin/sh
 set -eu
 cd /opt/sample
+/usr/bin/docker compose exec -T frontend nginx -t
 /usr/bin/docker compose exec -T frontend nginx -s reload
 ```
 
-Замените `/opt/sample` абсолютным путём к своему клону, проверьте путь к Docker
+Замените `/opt/sample` абсолютным путём к клону, проверьте путь к Docker
 командой `command -v docker` и сделайте hook исполняемым:
 
 ```sh
 sudo chmod 750 /etc/letsencrypt/renewal-hooks/deploy/reload-sample.sh
 ```
 
-Сначала можно проверить команду reload вручную из каталога проекта. Hook
-запускается certbot после успешного обновления, без перезапуска БД.
+Проверьте команды `nginx -t` и reload вручную из каталога проекта. Hook запускается
+Certbot после успешного обновления, без перезапуска БД. Полный каталог
+`/etc/letsencrypt` должен оставаться смонтированным, чтобы nginx увидел новые
+файлы в `archive/` и обновлённые ссылки в `live/`.
 
 ## Локальная отладка — отключена по умолчанию
 
-Базовый `docker-compose.yml` публикует только HTTPS 443. Дополнительный файл
-`docker-compose.debug.yml` явно включает HTTP **только на 127.0.0.1:8080**.
-На публичном VDS этот файл не подключайте.
+Базовый `docker-compose.yml` публикует HTTPS 443 и HTTP 80 для ACME/перенаправления.
+Дополнительный файл `docker-compose.debug.yml` явно включает приложение по HTTP
+**только на 127.0.0.1:8080**, без перенаправления. На публичном VDS этот файл не
+подключайте.
 
-Для локального запуска без реального домена нужны OpenSSL и свободный порт 443:
+Для локального запуска без реального домена нужны OpenSSL и свободные порты 80/443:
 
 ```sh
 cp .env.example .env
 ./scripts/create-local-certificate.sh
+mkdir -p certbot-www/.well-known/acme-challenge
+chmod 755 certbot-www certbot-www/.well-known certbot-www/.well-known/acme-challenge
 ```
 
 Укажите в `.env` `DOMAIN=localhost`, `TLS_DIRECTORY=./local-certs` и свой
@@ -160,8 +244,8 @@ curl --fail http://127.0.0.1:8080/healthz
 сертификаты своего устройства. Проверку TLS отключать не требуется.
 Скрипт оставляет существующий сертификат без изменений.
 
-Чтобы выключить локальный HTTP и удалить его опубликованный порт, пересоздайте
-фронтенд с базовой конфигурацией:
+Чтобы выключить локальную отладку по HTTP 8080, пересоздайте фронтенд с базовой
+конфигурацией. HTTP 80 продолжит работать как ACME/redirect-вход:
 
 ```sh
 docker compose up -d --force-recreate frontend
@@ -203,10 +287,22 @@ docker compose down
 
 ## Проверки разработки
 
+Проверка HTTP-редиректа, HTTPS с проверкой сертификата, доступности приложения
+и выдачи ACME-файла (из каталога проекта на VDS):
+
+```sh
+DOMAIN=vsevmeste.tech ACME_WEBROOT=./certbot-www python3 tests/https.py
+```
+
+Проверка не меняет записи БД. В каталоге ACME создаётся временный файл,
+который удаляется после запроса. Без `ACME_WEBROOT` эта проверка файла
+будет явно пропущена. Для локального тестового сертификата также задайте
+`CA_CERT=local-certs/live/localhost/fullchain.pem` и `DOMAIN=localhost`.
+
 При запущенном приложении интеграционные проверки:
 
 ```sh
-BASE_URL=https://example.org python3 tests/smoke.py
+BASE_URL=https://vsevmeste.tech python3 tests/smoke.py
 ```
 
 Для локального самоподписанного сертификата передайте доверенный CA, сохраняя

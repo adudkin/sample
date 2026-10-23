@@ -2,6 +2,7 @@ services:
   frontend:
     build: ./frontend
     ports:
+      - "80:80"
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
@@ -10,6 +11,12 @@ services:
       - type: bind
         source: ${TLS_DIRECTORY:-/etc/letsencrypt}
         target: /etc/letsencrypt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ACME_WEBROOT:-./certbot-www}
+        target: /var/www/certbot
         read_only: true
         bind:
           create_host_path: false
